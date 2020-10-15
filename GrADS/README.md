@@ -14,10 +14,10 @@
 
   出图如下：
 
-  ![](.pic/demo.png)
+  ![](./.pic/demo.png)
 
   官网原图：
-  ![](.pic/surf_cli_chn_merge_cmp_pre_hour_grid_0.10SURF_CLI_CHN_MERGE_CMP_PRE_HOUR_GRID_0.10-2018081707.gif)
+  ![](./.pic/surf_cli_chn_merge_cmp_pre_hour_grid_0.10SURF_CLI_CHN_MERGE_CMP_PRE_HOUR_GRID_0.10-2018081707.gif)
 
 - WRF V3.8 MODEL输出的GrADS二进制码数据
 
