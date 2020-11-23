@@ -2,6 +2,8 @@
 """
 GrADS相关
 
+TODO: “dtype”和站点数据的dtype重名
+
 @Time    : 2020/9/20 9:52
 @Author  : modabao
 """
@@ -76,6 +78,11 @@ class GrADS(object):
         self.__ctl['undef'] = float(rest_words)
 
     def __pdef(self, rest_words):
+        """
+        TODO: 暂时认为wrf的lcc投影都是基于6370000m的正球体
+        TODO：`TransformPoint`这个方法在公开地理坐标系下如`WGS84`传参或返回的地理坐标都是先纬度再经度，
+              在自定义地理坐标系下传参或返回的地理坐标却是先经度再维度
+        """
         isize, jsize, prj, latref, lonref, iref, jref, slat, nlat, standard_lon, dx, dy = \
             rest_words.split()
         assert prj == 'lcc'
@@ -84,14 +91,33 @@ class GrADS(object):
             float(x) for x in [latref, lonref, iref, jref, slat, nlat, standard_lon, dx, dy]
         )
         lcc = osr.SpatialReference()
-        lcc.SetLCC(slat, nlat, latref, lonref, (iref - 1) * dx, (jref - 1) * dy)
+        center = {'lat': latref, 'lon': lonref}
+        wrf_flag = False
+        for line in self.ctl_lines:
+            if 'MOAD_CEN_LAT' in line:
+                center['lat'] = float(line.split('=')[-1])
+                wrf_flag = True
+            if 'STAND_LON' in line:
+                center['lon'] = float(line.split('=')[-1])
+                wrf_flag = True
+        false_east, false_north = ((iref - 1) * dx, (jref - 1) * dy) if wrf_flag else (0, 0)
+        if wrf_flag:
+            lcc.ImportFromProj4('+proj=longlat +a=6370000 +b=6370000 +no_defs')
+        lcc.SetLCC(slat, nlat, center['lat'], center['lon'], false_east, false_north)
         lcc.SetLinearUnitsAndUpdateParameters('kilometre', dx)
         geo = lcc.CloneGeogCS()
         lcc2geo = osr.CoordinateTransformation(lcc, geo)
         geo2lcc = osr.CoordinateTransformation(geo, lcc)
+        if wrf_flag:
+            e, n, _ = geo2lcc.TransformPoint(lonref, latref)
+            false_west = -(iref-1) + e
+            false_south = -(jref-1) + n
+            x, y = np.arange(isize) + false_west, np.arange(jsize) + false_south
+        else:
+            x, y = np.arange(isize), np.arange(jsize)
         self.__ctl['pdef'] = {'lcc2geo': lcc2geo, 'geo2lcc': geo2lcc}
         self.__ctl['x_size'], self.__ctl['y_size'] = isize, jsize
-        self.__ctl['x'], self.__ctl['y'] = np.arange(isize), np.arange(jsize)
+        self.__ctl['x'], self.__ctl['y'] = x, y
 
     def __xydef(self, rest_words, first_word):
         n, linear, start, step = rest_words.split()
