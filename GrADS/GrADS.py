@@ -13,7 +13,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
-from osgeo import osr
+import cartopy.crs as ccrs
 import xarray as xr
 
 
@@ -90,34 +90,35 @@ class GrADS(object):
         latref, lonref, iref, jref, slat, nlat, standard_lon, dx, dy = (
             float(x) for x in [latref, lonref, iref, jref, slat, nlat, standard_lon, dx, dy]
         )
-        lcc = osr.SpatialReference()
-        center = {'lat': latref, 'lon': lonref}
-        wrf_flag = False
         for line in self.ctl_lines:
             if 'MOAD_CEN_LAT' in line:
-                center['lat'] = float(line.split('=')[-1])
-                wrf_flag = True
+                MOAD_CEN_LAT = float(line.split('=')[-1])
             if 'STAND_LON' in line:
-                center['lon'] = float(line.split('=')[-1])
-                wrf_flag = True
-        false_east, false_north = ((iref - 1) * dx, (jref - 1) * dy) if wrf_flag else (0, 0)
-        if wrf_flag:
-            lcc.ImportFromProj4('+proj=longlat +a=6370000 +b=6370000 +no_defs')
-        lcc.SetLCC(slat, nlat, center['lat'], center['lon'], false_east, false_north)
-        lcc.SetLinearUnitsAndUpdateParameters('kilometre', dx)
-        geo = lcc.CloneGeogCS()
-        lcc2geo = osr.CoordinateTransformation(lcc, geo)
-        geo2lcc = osr.CoordinateTransformation(geo, lcc)
-        if wrf_flag:
-            e, n, _ = geo2lcc.TransformPoint(lonref, latref)
-            false_west = -(iref-1) + e
-            false_south = -(jref-1) + n
-            x, y = np.arange(isize) + false_west, np.arange(jsize) + false_south
-        else:
-            x, y = np.arange(isize), np.arange(jsize)
+                STAND_LON = float(line.split('=')[-1])
+        globe = ccrs.Globe(ellipse='sphere', semimajor_axis=6370000, semiminor_axis=6370000)
+        lcc = ccrs.LambertConformal(central_longitude=STAND_LON, central_latitude=MOAD_CEN_LAT,
+                                    standard_parallels=(slat, nlat), globe=globe)
+        geo = lcc.as_geodetic()
+        x_ref, y_ref = lcc.transform_point(lonref, latref, geo)
+        false_east = (iref - 1) * dx - x_ref
+        false_north = (jref - 1) * dy - y_ref
+        lcc = ccrs.LambertConformal(central_longitude=STAND_LON, central_latitude=MOAD_CEN_LAT,
+                                    false_easting=false_east, false_northing=false_north,
+                                    standard_parallels=(slat, nlat), globe=globe)
+
+        def lcc2geo(x, y):
+            lonlat = geo.transform_points(lcc, x, y)
+            lon, lat = lonlat[..., 0], lonlat[..., 1]
+            return lon, lat
+
+        def geo2lcc(lon, lat):
+            xyz = lcc.transform_points(geo, lon, lat)
+            x, y = xyz[..., 0], xyz[..., 1]
+            return x, y
+
         self.__ctl['pdef'] = {'lcc2geo': lcc2geo, 'geo2lcc': geo2lcc}
         self.__ctl['x_size'], self.__ctl['y_size'] = isize, jsize
-        self.__ctl['x'], self.__ctl['y'] = x, y
+        self.__ctl['x'], self.__ctl['y'] = np.arange(isize) * dx, np.arange(jsize) * dy
 
     def __xydef(self, rest_words, first_word):
         n, linear, start, step = rest_words.split()
@@ -242,7 +243,8 @@ class GrADS(object):
         element = np.fromfile(self.bin_path, dtype=self.__ctl['dtype'],
                               count=count, offset=offset).reshape(shape)
         y, x = ('y', 'x') if 'pdef' in self.__ctl else ('lat', 'lon')
-        coords = (('time', self.__ctl['tdef'][[time_id]]), ('level', self.__ctl['zdef']),
+        level = [0] if self.__ctl['vars'].loc[name, 'layers'] == 1 else self.__ctl['zdef']
+        coords = (('time', self.__ctl['tdef'][[time_id]]), ('level', level),
                   (y, self.__ctl[y]), (x, self.__ctl[x]))
         element = xr.DataArray(element, coords=coords, name=name)
         return element.where(element != self.__ctl['undef'])
